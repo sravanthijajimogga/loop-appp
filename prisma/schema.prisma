@@ -1,0 +1,247 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+/// Better Auth user. Email/password hashes live on Account, not User.
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions     Session[]
+  accounts     Account[]
+  bookings     Booking[]
+  bulkBookings BulkBooking[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String    @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Plane {
+  id       String   @id @default(cuid())
+  code     String   @unique
+  name     String
+  capacity Int
+  flights  Flight[]
+}
+
+model Country {
+  id      String @id @default(cuid())
+  isoCode String @unique
+  name    String
+  capital String?
+  cities  City[]
+
+  @@index([name])
+  @@map("country")
+}
+
+model City {
+  id        String  @id @default(cuid())
+  name      String
+  countryId String
+  country   Country @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  originRoutes      Route[] @relation("RouteOriginCity")
+  destinationRoutes Route[] @relation("RouteDestinationCity")
+
+  @@unique([countryId, name])
+  @@index([name])
+  @@map("city")
+}
+
+model Route {
+  id                String  @id @default(cuid())
+  origin            String
+  destination       String
+  originCityId      String?
+  destinationCityId String?
+  originCity        City?   @relation("RouteOriginCity", fields: [originCityId], references: [id], onDelete: SetNull)
+  destinationCity   City?   @relation("RouteDestinationCity", fields: [destinationCityId], references: [id], onDelete: SetNull)
+  flights           Flight[]
+
+  @@unique([origin, destination])
+  @@index([originCityId])
+  @@index([destinationCityId])
+}
+
+model Flight {
+  id            String   @id @default(cuid())
+  flightNumber  String
+  routeId       String
+  route         Route    @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  planeId       String
+  plane         Plane    @relation(fields: [planeId], references: [id], onDelete: Restrict)
+  departureAt   DateTime
+  arrivalAt     DateTime
+  basePrice     Decimal  @db.Decimal(10, 2)
+  bulkPrice     Decimal  @db.Decimal(10, 2)
+  seats         Seat[]
+  bulkBookings  BulkBooking[]
+
+  @@unique([flightNumber, departureAt])
+  @@index([routeId])
+  @@index([planeId])
+}
+
+model Seat {
+  id       String   @id @default(cuid())
+  code     String
+  isBooked Boolean  @default(false)
+  flightId String
+  flight   Flight   @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  booking  Booking?
+
+  @@unique([flightId, code])
+  @@index([flightId, isBooked])
+}
+
+model Booking {
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  seatId        String         @unique
+  seat          Seat           @relation(fields: [seatId], references: [id], onDelete: Restrict)
+  bookedAt      DateTime       @default(now())
+  status        BookingStatus  @default(PENDING)
+  passengerName String?
+  bulkBookingId String?
+  bulkBooking   BulkBooking?   @relation(fields: [bulkBookingId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([bulkBookingId])
+  @@index([status])
+}
+
+/// One group reservation on a single flight (same route) at a lower fixed fare.
+model BulkBooking {
+  id              String         @id @default(cuid())
+  organizerId     String
+  organizer       User           @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  flightId        String
+  flight          Flight         @relation(fields: [flightId], references: [id], onDelete: Restrict)
+  passengerCount  Int
+  unitPrice       Decimal        @db.Decimal(10, 2)
+  totalPrice      Decimal        @db.Decimal(10, 2)
+  status          BookingStatus  @default(PENDING)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  bookings        Booking[]
+
+  @@index([organizerId])
+  @@index([flightId])
+  @@index([status])
+}
+
+enum BulkGroupStatus {
+  OPEN
+  CLOSED
+}
+
+model Bus {
+  id            String      @id @default(cuid())
+  code          String
+  operator      String
+  fromCity      String
+  toCity        String
+  departureAt   DateTime
+  arrivalAt     DateTime
+  basePrice     Decimal     @db.Decimal(10, 2)
+  bulkPrice     Decimal     @db.Decimal(10, 2)
+  bulkMinSeats  Int         @default(3)
+  seats         BusSeat[]
+  bulkGroups    BulkGroup[]
+
+  @@index([fromCity, toCity, departureAt])
+}
+
+model BusSeat {
+  id       String  @id @default(cuid())
+  code     String
+  row      Int
+  col      Int
+  isBooked Boolean @default(false)
+  busId    String
+  bus      Bus     @relation(fields: [busId], references: [id], onDelete: Cascade)
+
+  @@unique([busId, code])
+  @@index([busId, isBooked])
+}
+
+/// Open group on a bus for travelers sharing the same destination, at the bulk fare.
+model BulkGroup {
+  id           String          @id @default(cuid())
+  busId        String
+  bus          Bus             @relation(fields: [busId], references: [id], onDelete: Cascade)
+  fromCity     String
+  destination  String
+  memberCount  Int
+  capacity     Int
+  unitPrice    Decimal         @db.Decimal(10, 2)
+  status       BulkGroupStatus @default(OPEN)
+
+  @@index([busId, destination, status])
+}
